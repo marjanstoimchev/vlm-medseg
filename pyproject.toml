@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vlm-medseg"
+version = "0.1.0"
+description = "Vision-language models for medical image segmentation: LocateAnything + SAM2 instance segmentation on PanNuke, with a decomposed evaluation framework."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Marjan Stoimchev" }]
+keywords = ["vlm", "segmentation", "pathology", "pannuke", "sam2", "locate-anything"]
+
+# Core deps are light and already present on Kaggle / most ML envs, so a
+# `pip install vlm-medseg` stays fast and does NOT touch the torch / transformers
+# that Kaggle ships pre-built against CUDA. The heavy model stacks live in extras.
+dependencies = [
+    "numpy>=1.24",
+    "pillow>=9.0",
+    "pyyaml>=6.0",
+    "tqdm>=4.64",
+    "scipy>=1.10",
+    "scikit-image>=0.21",
+    "pandas>=1.5",
+]
+
+[project.optional-dependencies]
+# Loading PanNuke from the Hub. Skip if you attach PanNuke as a Kaggle dataset.
+data = ["datasets>=2.19", "huggingface-hub>=0.23"]
+
+# SAM2 segmentation (local MPS / CUDA or Kaggle). transformers>=4.57 carries Sam2Model.
+sam2 = ["transformers>=4.57.1", "torch>=2.2", "torchvision>=0.17"]
+
+# LocateAnything-3B on a CUDA GPU (Kaggle). Pins mirror NVIDIA's model card.
+# torch is intentionally absent: Kaggle's pre-installed CUDA torch must win.
+locate = [
+    "transformers==4.57.1",
+    "decord==0.6.0",
+    "lmdb==1.7.5",
+    "peft",
+    "accelerate",
+    "einops",
+    "timm",
+]
+
+viz = ["matplotlib>=3.6", "opencv-python>=4.7"]
+
+# Post-hoc nucleus classifier (frozen encoder features + linear probe).
+# timm -> UNI2-h; transformers -> DINOv3.
+classify = ["timm>=1.0", "transformers>=4.57.1", "scikit-learn>=1.3", "joblib>=1.3"]
+
+dev = ["pytest>=7.0", "ruff>=0.4"]
+
+[project.urls]
+Homepage = "https://github.com/marjanstoimchev/vlm-medseg"
+Repository = "https://github.com/marjanstoimchev/vlm-medseg"
+
+[project.scripts]
+vlm-medseg = "vlm_medseg.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "W"]
+ignore = ["E501", "B905"]  # E501: long lines ok; B905: zip strict= is opinionated
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

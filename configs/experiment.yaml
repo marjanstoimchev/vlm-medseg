@@ -1,0 +1,34 @@
+# Default box-prompt experiment on PanNuke.
+#
+# Conditions (box prompts only):
+#   la_box      LocateAnything-3B (Detection) -> SAM2 box        [the VLM pipeline]
+#   oracle_box  ground-truth boxes            -> SAM2 box        [SAM2 ceiling]
+#   gdino_box   Grounding-DINO (optional)     -> SAM2 box        [detector baseline]
+
+dataset:
+  id: RationAI/PanNuke
+  fold: fold1            # fold1 | fold2 | fold3 (zero-shot eval; no training)
+  n_patches: 150         # stratified across the 19 tissue types
+  seed: 0
+
+prompts:
+  class_aware: true      # per-class phrases -> mPQ + confusion; false -> binary only
+
+models:
+  sam2: facebook/sam2-hiera-large
+  locate_anything: nvidia/LocateAnything-3B
+  grounding_dino: IDEA-Research/grounding-dino-base
+
+locate_anything:
+  mode: detection        # box pathway
+  generation_mode: hybrid
+  max_new_tokens: 4096
+  temperature: 0.0
+  input_short_size: 1024 # upscale 256 -> 1024 so tiny nuclei are visible to the VLM
+
+eval:
+  iou_thresh: 0.5        # PQ / matching threshold
+  conditions: [la_box, oracle_box]
+
+output:
+  dir: runs

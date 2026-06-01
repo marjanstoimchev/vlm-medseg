@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Envs
+.venv/
+venv/
+env/
+
+# Data, caches, run artifacts (keep the repo light — these are reproducible)
+data/
+runs/
+outputs/
+results/
+*.parquet
+*.arrow
+cache/
+.cache/
+
+# Models / checkpoints / trained probes
+*.pt
+*.pth
+*.safetensors
+*.ckpt
+*.joblib
+checkpoints/
+models/
+
+# Notebook heavy outputs are stripped before commit; large media excluded
+assets/*.gif
+assets/*.mp4
+
+# OS
+.DS_Store
+Thumbs.db

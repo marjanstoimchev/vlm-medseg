@@ -1,0 +1,47 @@
+# PanNuke schema reference (verified against the RationAI/PanNuke `datasets`
+# feature definitions). For documentation; the loader hardcodes these in
+# vlm_medseg/constants.py.
+
+nuclei_classes:   # `categories` field, per nucleus instance
+  0: Neoplastic
+  1: Inflammatory
+  2: Connective
+  3: Dead
+  4: Epithelial
+
+tissue_types:     # `tissue` ClassLabel, per patch (19)
+  - Adrenal Gland
+  - Bile Duct
+  - Bladder
+  - Breast
+  - Cervix
+  - Colon
+  - Esophagus
+  - Head & Neck
+  - Kidney
+  - Liver
+  - Lung
+  - Ovarian
+  - Pancreatic
+  - Prostate
+  - Skin
+  - Stomach
+  - Testis
+  - Thyroid
+  - Uterus
+
+# Natural-language prompts handed to the grounding VLM (descriptive on purpose:
+# the model was trained on natural images, not histopathology).
+class_prompts:
+  0: neoplastic tumor cell nucleus
+  1: inflammatory immune cell nucleus
+  2: connective or soft tissue cell nucleus
+  3: dead or necrotic cell nucleus
+  4: epithelial cell nucleus
+generic_prompt: cell nucleus
+
+folds:            # patches per split
+  fold1: 2656
+  fold2: 2523
+  fold3: 2722
+patch_size: 256

@@ -1,0 +1,19 @@
+# Kaggle GPU runtime for the full LocateAnything-3B + SAM2 pipeline.
+#
+# Kaggle ships a CUDA build of torch already — DO NOT install torch here or
+# you will clobber it with a wheel that may not match the driver. We only add
+# the model stacks on top. transformers==4.57.1 serves BOTH LocateAnything-3B
+# (NVIDIA's pinned version) and SAM2 (Sam2Model lives in >=4.57).
+#
+# Usage in the notebook's bootstrap cell:
+#   !pip install -q "transformers==4.57.1" "decord==0.6.0" "lmdb==1.7.5" \
+#       peft accelerate einops timm
+#   !pip install -q "git+https://github.com/marjanstoimchev/vlm-medseg.git@main"
+
+transformers==4.57.1
+decord==0.6.0
+lmdb==1.7.5
+peft
+accelerate
+einops
+timm
