@@ -1,142 +1,204 @@
 # vlm-medseg
 
-A benchmark for **how vision models perform at medical instance segmentation** —
-specifically nuclei on **PanNuke**. It runs a family of detectors (grounding
-VLMs, open-vocab detectors, an oracle) into **SAM2** for masks, plus **SAM3**
-text-prompted concept segmentation, then scores everything with a decomposed
-metric suite (PQ / AJI / Dice / detection F1) and a post-hoc nucleus classifier.
+**Benchmarking vision-language and open-vocabulary models for nuclei instance segmentation on PanNuke.**
 
-Everything is modular and dataset-agnostic: detectors, segmenters, encoders, and
-classifier heads are pluggable, and PanNuke is the reference dataset.
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Lint](https://img.shields.io/badge/lint-ruff-261230)
 
-## The idea: decompose, then compare
+`vlm-medseg` pairs object localizers — grounding VLMs (LocateAnything-3B,
+Qwen2.5-VL), open-vocabulary detectors (Grounding-DINO, OWLv2), and a
+ground-truth oracle — with **SAM2** for masks, adds **SAM3** text-prompted
+concept segmentation, and scores everything with a decomposed metric suite
+(PQ / AJI / Dice / detection F1). An optional post-hoc classifier (frozen
+pathology encoder + linear/MLP head) recovers nucleus subtypes. The pipeline,
+detectors, segmenters, encoders, and classifier heads are all pluggable, and the
+data layer is dataset-agnostic (PanNuke is the reference dataset).
 
-A VLM pipeline must **find** an object, **name** it, and **segment** it. A single
-score hides which stage failed, so the framework separates them:
+---
 
-- **Detection** (recall / counting): can the model localize each nucleus?
-- **Segmentation** (matched-IoU / SQ): given a box, can SAM2 mask the nucleus?
-- **Classification** (confusion / mPQ): is the nucleus subtype right?
+## Why
 
-Every run is read against an **oracle** (ground-truth boxes → SAM2) that fixes
-the SAM2 ceiling, so any shortfall is attributed to the right stage.
+A nuclei pipeline must **find**, **name**, and **segment** each nucleus; a single
+score hides which stage fails. `vlm-medseg` separates them and reads every method
+against a **ground-truth oracle** that fixes SAM2's segmentation ceiling — so any
+shortfall is attributable to detection, segmentation, or classification.
 
-### Conditions (the detector ladder)
+## Features
 
-| condition | localizer → masker | role |
+- **Six conditions** behind one interface: `oracle_box`, `gdino_box`, `owlv2_box`, `qwen_box`, `la_box`, `sam3_text`.
+- **SAHI** tiling wrapper for any box detector (helps on dense, tiny nuclei).
+- **Decomposed metrics:** PQ / SQ / DQ, per-class mPQ, AJI, Dice, matched-IoU, detection P/R/F1, counting error, class confusion — stratified by class and tissue.
+- **Post-hoc nucleus classifier:** frozen encoder (UNI2-h or DINOv3) + trained head; before/after label overlays.
+- **Dataset-agnostic core:** add a dataset via `DatasetSpec` + `BaseDataset`.
+- **Reproducible runs:** every run writes `results/<method>/` (metrics, predictions, per-patch overlays); detection caching; Kaggle notebooks + local CLI.
+
+## Installation
+
+```bash
+git clone https://github.com/marjanstoimchev/vlm-medseg.git
+cd vlm-medseg
+pip install -e ".[data,sam2,viz,classify,dev]"
+```
+
+`torch` / `transformers` live in extras so a bare install stays light and a host's
+pre-built CUDA `torch` (e.g. Kaggle) isn't clobbered. LocateAnything-3B is
+CUDA-only — run it via the Kaggle notebook (see [`requirements-kaggle.txt`](requirements-kaggle.txt)).
+
+## Quick start
+
+```bash
+# SAM2 ceiling on 30 PanNuke patches (local, fast)
+python scripts/run_method.py oracle_box --n 30
+
+# Open-vocabulary detector -> SAM2, with tiling
+python scripts/run_method.py owlv2_box --n 8 --sahi
+
+# SAM3 text-concept segmentation + post-hoc class correction
+python scripts/run_method.py sam3_text --n 8 --threshold 0.2 --classifier uni2h_mlp
+```
+
+Each run writes `results/<method>/`: `summary.json`, per-patch `predictions.jsonl`
+and `patch_metrics.jsonl`, `config.json`, and `overlays/` (`H&E | GT | prediction`,
+or `before | after` with a classifier).
+
+## Usage
+
+### Conditions
+
+| condition | localizer → masker | family |
 |---|---|---|
-| `oracle_box` | GT boxes → SAM2 | SAM2 ceiling (perfect detection) |
-| `gdino_box` | Grounding-DINO → SAM2 | open-vocab baseline |
-| `owlv2_box` | OWLv2 → SAM2 | open-vocab baseline (localizes small objects) |
-| `qwen_box` | Qwen2.5-VL → SAM2 | stock VLM grounding baseline |
-| `la_box` | LocateAnything-3B → SAM2 | fine-tuned grounding VLM (Kaggle GPU) |
-| `sam3_text` | SAM3 text concept | detector-free, end-to-end |
+| `oracle_box` | ground-truth boxes → SAM2 | upper bound |
+| `gdino_box` | Grounding-DINO → SAM2 | open-vocabulary detection |
+| `owlv2_box` | OWLv2 → SAM2 | open-vocabulary detection |
+| `qwen_box` | Qwen2.5-VL → SAM2 | grounding VLM (stock) |
+| `la_box` | LocateAnything-3B → SAM2 | grounding VLM (fine-tuned, CUDA) |
+| `sam3_text` | SAM3 text concept | concept segmentation (end to end) |
 
-Any box detector can be wrapped with **SAHI** (tile → detect → merge) to rescue
-it on dense tiny nuclei, and any condition's labels can be replaced by the
-**post-hoc classifier** (frozen pathology encoder + trained head).
+### `run_method.py` arguments
 
-## Layout
+| argument | default | description |
+|---|---|---|
+| `method` | — | one of the conditions above (positional) |
+| `--dataset` | `pannuke` | registered dataset name |
+| `--fold` | `fold1` | dataset split |
+| `--n` | `20` | number of patches (stratified across tissues) |
+| `--seed` | `0` | sampling seed |
+| `--device` | `auto` | `auto` / `mps` / `cuda` / `cpu` |
+| `--model` | per method | override the model id |
+| `--sam2-model` | `facebook/sam2-hiera-large` | SAM2 checkpoint (box methods) |
+| `--iou` | `0.5` | IoU threshold for matching / PQ |
+| `--threshold` | `0.3` | SAM3 detection threshold |
+| `--input-short-size` | per method | upscale short side before the VLM (`qwen` 896, `la` 1024) |
+| `--sahi` | off | tile the patch before the detector and NMS-merge |
+| `--tile` / `--overlap` | `128` / `0.25` | SAHI tile size / overlap |
+| `--classifier` | none | probe path or bare name → `models/classifiers/<name>.joblib` |
+| `--no-class-aware` | off | class-agnostic (binary) prompts |
+| `--max-overlays` / `--gallery-rows` | `12` / `6` | overlay rendering limits |
+| `--out` | `results/<method>` | output directory |
+
+### Post-hoc nucleus classifier
+
+Segment class-agnostically, then classify each mask from its pixels with a frozen
+pathology encoder + a trained head:
+
+```bash
+# 1) curate features (UNI2-h default; --encoder dinov3 also available)
+python scripts/curate_classifier_data.py --fold fold2 --n 80 --max-per-class 6000
+# 2) train a head (default MLP) -> models/classifiers/<encoder>_<head>.joblib
+python scripts/train_classifier.py --features data/classifier/uni2h_fold2.npz
+# 3) use it: --classifier uni2h_mlp
+```
+
+Curation uses class-balanced `StratifiedKFold` splits; the held-out fold run
+through the pipeline is the honest test. The CLI (`vlm-medseg`) also exposes
+`sample`, `oracle`, `eval-cache`, and `report` subcommands.
+
+### Notebooks ([`notebooks/`](notebooks/))
+
+| notebook | purpose |
+|---|---|
+| `locate_anything_pannuke_kaggle` | run LocateAnything-3B → SAM2 on a Kaggle GPU |
+| `method_comparison_kaggle` | side-by-side comparison of LA / OWLv2 / SAM3 vs oracle on N random patches |
+| `explore_embeddings` | classifier feature diagnostics (projection, per-tissue, retrieval) |
+| `compare_encoders` | encoder × head bench (UNI2-h vs DINOv3; linear/SVM/MLP) |
+
+Private-repo notebooks `pip install` the package from GitHub; on Kaggle add a
+`GITHUB_TOKEN` secret (or attach the repo as a dataset).
+
+## Results
+
+Indicative numbers on **PanNuke fold1, _n_ = 8 patches, SAM2-hiera-large** (a small
+probe for sanity, not a leaderboard — reproduce/scale with `run_method.py` or the
+notebooks). LocateAnything (`la_box`) requires a GPU and is reported from the
+Kaggle notebook.
+
+| method | binary PQ | matched-IoU | detection recall |
+|---|---|---|---|
+| `oracle_box` (ceiling) | 0.81 | 0.82 | 0.99 |
+| `owlv2_box` | localizes (real PQ) | ~0.89 | low |
+| `gdino_box` / `qwen_box` | ≈ 0 (whole-image boxes) | — | ≈ 0 |
+| `gdino_box` + SAHI | ~0.25 | ~0.83 | improved |
+| `sam3_text` | best masks | ~0.84 | moderate |
+
+Post-hoc classifier (PanNuke fold2 held-out, ~9k nuclei): **UNI2-h + MLP — accuracy 0.78, macro-F1 0.77** (per-class F1 0.70–0.84).
+
+**Takeaway.** Stock open-vocabulary/VLM detectors do not densely localize nuclei
+zero-shot; SAHI and resolution help, but the working recipes are **SAM3 + a
+pathology classifier** locally and **LocateAnything → SAM2** on a GPU.
+
+## Project layout
 
 ```
 src/vlm_medseg/
   data/        DatasetSpec + BaseDataset + registry; PanNuke reference impl
-  detect/      oracle, grounding_dino, owlv2, qwen_vl, locate_anything; sahi (tiling wrapper)
-  segment/     sam2 (box/point masker), sam3 (text concept, end to end)
-  classify/    crops, encoders (uni2h | dinov3), heads (linear|svm|mlp|knn), dataset curation, train
+  detect/      oracle, grounding_dino, owlv2, qwen_vl, locate_anything; sahi (tiling)
+  segment/     sam2 (box masker), sam3 (text concept, end to end)
+  classify/    crops, encoders, heads, dataset curation, train
   pipeline/    run_condition / run_segmenter_condition; classifier hook; detection cache
   eval/        matching, PQ/SQ/DQ + mPQ, AJI/Dice, detection, classification, report
   viz/         class-coloured overlays + summary plots
-  prompts.py   per-model prompt templates + the PROMPTS registry
-  cli.py
-scripts/       run_method.py (driver) · curate_classifier_data.py · train_classifier.py
-               make_notebook.py · push_to_kaggle.sh
-notebooks/     locate_anything_pannuke_kaggle (Kaggle LA pipeline)
-               explore_embeddings · compare_encoders (classifier diagnostics)
-configs/ · tests/
-data/ · models/classifiers/ · results/   (gitignored artifacts)
+  prompts.py · log.py · cli.py
+scripts/   run_method · curate_classifier_data · train_classifier · make_notebook · push_to_kaggle
+notebooks/ · configs/ · tests/
 ```
-
-## Install
-
-```bash
-pip install -e ".[data,sam2,viz,classify,dev]"     # local dev / eval
-```
-LocateAnything runs on Kaggle (CUDA); see `requirements-kaggle.txt` and the
-notebook. `torch`/`transformers` are extras so a bare install stays light and
-Kaggle's pre-built CUDA torch isn't clobbered.
-
-## Run it (`scripts/run_method.py`)
-
-Each run writes `results/<method>/`: `summary.json`, per-patch `predictions.jsonl`
-+ `patch_metrics.jsonl`, `config.json`, and `overlays/` (written **as the run
-progresses** — `H&E | GT | prediction`, or `before | after` with a classifier).
-
-```bash
-# SAM2 ceiling (fast, local):
-python scripts/run_method.py oracle_box  --n 30
-
-# open-vocab / VLM detectors -> SAM2 (MPS); add --sahi to tile dense patches:
-python scripts/run_method.py owlv2_box   --n 8 --device mps
-python scripts/run_method.py gdino_box   --n 8 --sahi --tile 128
-python scripts/run_method.py qwen_box    --n 8 --device mps        # slow; upscales to 896 by default
-
-# SAM3 concept segmentation (end to end), with post-hoc class correction:
-python scripts/run_method.py sam3_text   --n 8 --device mps --threshold 0.2 --classifier uni2h_mlp
-```
-Flags: `--n --fold --device --model --iou --threshold(sam3) --input-short-size --sahi/--tile/--overlap --classifier --no-class-aware`.
-`la_box` runs only on a CUDA GPU (Kaggle notebook).
-
-## Post-hoc nucleus classifier
-
-SAM3/VLM masks can be great while their *labels* are not. Decouple it: segment
-class-agnostically, then classify each mask from its pixels with a frozen
-pathology encoder + a trained head.
-
-```bash
-# 1) curate features (UNI2-h default; --encoder dinov3 also available)
-python scripts/curate_classifier_data.py --fold fold2 --n 80 --device mps --max-per-class 6000
-# 2) train a head (default MLP) -> models/classifiers/<encoder>_<head>.joblib
-python scripts/train_classifier.py --features data/classifier/uni2h_fold2.npz
-# 3) use it anywhere: --classifier uni2h_mlp  (bare name resolves under models/classifiers/)
-```
-Curation uses sklearn `StratifiedKFold` (class-balanced) splits; the honest test
-is a different fold run through the pipeline. Explore/compare the encoders and
-heads in `notebooks/explore_embeddings.ipynb` and `compare_encoders.ipynb`.
-
-## Metrics
-
-Per patch and aggregated, stratified by class and tissue: **PQ / SQ / DQ**,
-binary and per-class **mPQ**, **AJI**, **Dice**, **matched-IoU** (isolates SAM2),
-detection **P/R/F1** + **counting error**, and a class **confusion** matrix.
-
-## Findings so far (small-n probes, MPS)
-
-- **`oracle_box` PQ ≈ 0.81** — SAM2-large's ceiling on nuclei given perfect boxes.
-- **`gdino_box` / `qwen_box` ≈ 0** — stock open-vocab/VLM models return whole-image
-  boxes (Qwen even at 896 px); they don't densely localize nuclei.
-- **`owlv2_box` localizes** (nucleus-sized boxes → real PQ); **SAHI** lifts GDINO from
-  PQ 0 → ~0.25 with matched-IoU ~0.83.
-- **`sam3_text`** gives the best masks (matched-IoU ~0.84) but collapses on class —
-  fixed by the classifier (**UNI2-h + MLP: ~0.77 macro-F1**, all classes ≥ 0.70 at 9k nuclei).
-
-Net: general VLMs aren't dense nuclei detectors yet; the working recipes are
-**SAM3 + a pathology classifier** locally and **LocateAnything → SAM2** on a GPU.
 
 ## Extending
 
-- **Dataset:** subclass `BaseDataset` + a `DatasetSpec`, `register_dataset("name", Cls)` — works everywhere (`--dataset name`).
-- **Detector:** a class with `detect(sample) -> [Detection]` + `.name`/`.spec`; add a `build_detector` branch.
-- **Encoder / head:** add to `classify/encoders.py` `_ENCODERS` or `classify/heads.py` `build_head`.
+- **Dataset:** subclass `BaseDataset` + define a `DatasetSpec`, then `register_dataset("name", Cls)` — usable everywhere via `--dataset name`.
+- **Detector:** a class with `detect(sample) -> list[Detection]` plus `.name` / `.spec`; add a branch in `build_detector`.
+- **Encoder / head:** register in `classify/encoders.py` or `classify/heads.py`.
 
-## Models
+## References
 
-SAM2 (`facebook/sam2-hiera-large`), SAM3 (`facebook/sam3`), LocateAnything-3B
-(`nvidia/LocateAnything-3B`), Grounding-DINO, OWLv2, Qwen2.5-VL-3B; classifier
-encoders UNI2-h (`MahmoodLab/UNI2-h`) and DINOv3 (`facebook/dinov3-*`).
+1. Ravi et al. *SAM 2: Segment Anything in Images and Videos.* Meta AI, 2024. https://github.com/facebookresearch/sam2
+2. Meta AI. *SAM 3: Segment Anything with Concepts.* 2025. https://ai.meta.com/research/publications/sam-3-segment-anything-with-concepts/
+3. NVIDIA. *LocateAnything.* https://research.nvidia.com/labs/lpr/locate-anything/ · model: https://huggingface.co/nvidia/LocateAnything-3B
+4. Liu et al. *Grounding DINO: Marrying DINO with Grounded Pre-Training for Open-Set Object Detection.* 2023.
+5. Minderer, Gritsenko, Houlsby. *Scaling Open-Vocabulary Object Detection (OWLv2).* NeurIPS 2023.
+6. Qwen Team, Alibaba. *Qwen2.5-VL.* 2025. https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct
+7. Chen et al. *Towards a general-purpose foundation model for computational pathology (UNI).* Nature Medicine, 2024. · https://huggingface.co/MahmoodLab/UNI2-h
+8. Siméoni et al. *DINOv3.* Meta AI, 2025.
+9. Gamper et al. *PanNuke: an open pan-cancer histology dataset for nuclei instance segmentation and classification.* 2019. · https://huggingface.co/datasets/RationAI/PanNuke
+10. Kirillov et al. *Panoptic Segmentation (PQ).* CVPR 2019. · Graham et al. *HoVer-Net.* Medical Image Analysis, 2019 (nuclei PQ).
+11. Kumar et al. *A Dataset and a Technique for Generalized Nuclear Segmentation (AJI).* IEEE TMI, 2017.
+12. Akyon et al. *Slicing Aided Hyper Inference (SAHI).* ICIP 2022. https://github.com/obss/sahi
 
-## License & credits
+## Citation
 
-Code: MIT. Datasets/models keep their own licenses — **PanNuke** is CC-BY-NC-SA-4.0,
-**LocateAnything-3B** is NVIDIA academic / non-profit research only, and UNI2-h is
-gated. Built on SAM2/SAM3, LocateAnything, RationAI/PanNuke, UNI2-h, and DINOv3.
+```bibtex
+@software{stoimchev_vlm_medseg,
+  author  = {Stoimchev, Marjan},
+  title   = {vlm-medseg: benchmarking vision-language models for nuclei instance segmentation},
+  year    = {2026},
+  url     = {https://github.com/marjanstoimchev/vlm-medseg}
+}
+```
+
+## License
+
+[MIT](LICENSE) © 2026 Marjan Stoimchev.
+
+Datasets and models retain their own licenses — **PanNuke** is CC-BY-NC-SA-4.0,
+**LocateAnything-3B** is NVIDIA academic / non-profit research only, and **UNI2-h**
+is gated. Review each before use.
