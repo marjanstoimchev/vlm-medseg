@@ -14,11 +14,13 @@ dist/
 venv/
 env/
 
-# Data, caches, run artifacts (keep the repo light — these are reproducible)
-data/
-runs/
-outputs/
-results/
+# Data, caches, run artifacts (keep the repo light — these are reproducible).
+# Anchored to the repo root so they don't shadow source packages such as
+# src/vlm_medseg/data — an unanchored `data/` matched that and dropped it from git.
+/data/
+/runs/
+/outputs/
+/results/
 *.parquet
 *.arrow
 cache/
@@ -30,8 +32,8 @@ cache/
 *.safetensors
 *.ckpt
 *.joblib
-checkpoints/
-models/
+/checkpoints/
+/models/
 
 # Notebook heavy outputs are stripped before commit; large media excluded
 assets/*.gif
