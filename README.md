@@ -119,7 +119,7 @@ through the pipeline is the honest test. The CLI (`vlm-medseg`) also exposes
 | notebook | purpose | run |
 |---|---|---|
 | `locate_anything_pannuke_kaggle` | grounding-VLM comparison: oracle vs stock Qwen2.5-VL vs LocateAnything-3B (transformers 4.57) | [▶ Kaggle](https://www.kaggle.com/code/marjan1111/locateanything-vlm-sam2) |
-| `method_comparison_kaggle` | side-by-side comparison of OWLv2 / SAM3 vs oracle on N random patches (transformers 5.x) | — |
+| `method_comparison_kaggle` | side-by-side comparison of OWLv2 / SAM3 vs oracle on N random patches (transformers 5.x) | [▶ Kaggle](https://www.kaggle.com/code/marjan1111/comparison-of-different-vlms-on-pannuke) |
 | `explore_embeddings` | classifier feature diagnostics (projection, per-tissue, retrieval) | — |
 | `compare_encoders` | encoder × head bench (UNI2-h vs DINOv3; linear/SVM/MLP) | — |
 
@@ -130,24 +130,64 @@ each notebook's bootstrap logs in with it.
 
 ## Results
 
-Indicative numbers on **PanNuke fold1, _n_ = 8 patches, SAM2-hiera-large** (a small
-probe for sanity, not a leaderboard — reproduce/scale with `run_method.py` or the
-notebooks). LocateAnything (`la_box`) requires a GPU and is reported from the
-Kaggle notebook.
+Two GPU notebooks benchmark the methods on a random sample of PanNuke fold1 patches
+(scale up with `N_IMAGES`); the classifier diagnostics run locally. Overlays use a
+**yellow boundary** over a **class-coloured fill**, and the **oracle** (ground-truth
+boxes → SAM2) is the segmentation ceiling every method is read against — so a method's
+distance from it is a *detection* gap, not a *masking* one.
 
-| method | binary PQ | matched-IoU | detection recall |
-|---|---|---|---|
-| `oracle_box` (ceiling) | 0.81 | 0.82 | 0.99 |
-| `owlv2_box` | localizes (real PQ) | ~0.89 | low |
-| `gdino_box` / `qwen_box` | ≈ 0 (whole-image boxes) | — | ≈ 0 |
-| `gdino_box` + SAHI | ~0.25 | ~0.83 | improved |
-| `sam3_text` | best masks | ~0.84 | moderate |
+### Grounding VLMs: what fine-tuning buys
 
-Post-hoc classifier (PanNuke fold2 held-out, ~9k nuclei): **UNI2-h + MLP — accuracy 0.78, macro-F1 0.77** (per-class F1 0.70–0.84).
+`locate_anything_pannuke_kaggle` &nbsp;·&nbsp; [▶ run on Kaggle](https://www.kaggle.com/code/marjan1111/locateanything-vlm-sam2)
 
-**Takeaway.** Stock open-vocabulary/VLM detectors do not densely localize nuclei
-zero-shot; SAHI and resolution help, but the working recipes are **SAM3 + a
-pathology classifier** locally and **LocateAnything → SAM2** on a GPU.
+<p align="center"><img src="assets/locate_anything.png" width="760" alt="H&E, ground truth, oracle, Qwen and LocateAnything overlays across six patches"></p>
+<p align="center"><img src="assets/results_locate_anything.png" width="760" alt="PQ, AJI, Dice and matched-IoU for oracle, Qwen and LocateAnything"></p>
+
+Stock **Qwen2.5-VL** returns near whole-image boxes, so it barely segments anything.
+**LocateAnything-3B**'s grounding fine-tuning recovers real nuclei: its **matched-IoU
+(0.81) approaches the oracle ceiling (0.86)** — the masks it produces are sound — while
+its lower PQ (0.30) is the *detection* gap, the nuclei it never proposes.
+
+| method | PQ | AJI | Dice | matched-IoU |
+|---|---|---|---|---|
+| oracle (ceiling) | 0.84 | 0.85 | 0.93 | 0.86 |
+| LocateAnything-3B → SAM2 | 0.30 | 0.34 | 0.48 | 0.81 |
+| Qwen2.5-VL (stock) → SAM2 | 0.00 | 0.01 | 0.23 | 0.00 |
+
+### Open-vocabulary detection & concept segmentation
+
+`method_comparison_kaggle` &nbsp;·&nbsp; [▶ run on Kaggle](https://www.kaggle.com/code/marjan1111/comparison-of-different-vlms-on-pannuke)
+
+<p align="center"><img src="assets/methods_comparison.png" width="760" alt="H&E, ground truth, oracle, OWLv2 and SAM3 overlays across six patches"></p>
+<p align="center"><img src="assets/results_methods_comparison.png" width="760" alt="PQ, AJI, Dice and matched-IoU for oracle, OWLv2 and SAM3"></p>
+
+Against the same ceiling, **SAM3** (detector-free concept segmentation) is the strongest
+non-oracle method; **OWLv2** localises but under-segments dense fields. Both trail the
+oracle by a detection margin, and their high matched-IoU confirms the masks themselves
+are fine.
+
+| method | PQ | AJI | Dice | matched-IoU |
+|---|---|---|---|---|
+| oracle (ceiling) | 0.84 | 0.85 | 0.93 | 0.86 |
+| SAM3 (text concept) | 0.37 | 0.49 | 0.64 | 0.84 |
+| OWLv2 → SAM2 | 0.09 | 0.11 | 0.31 | 0.78 |
+
+### Nucleus classifier & encoder diagnostics (local)
+
+Detector / SAM3 class labels collapse toward a single type, so a post-hoc **UNI2-h + MLP**
+classifier relabels each mask from its pixels. Two local notebooks document it end to end
+(run on CPU / MPS, figures rendered inline):
+
+- [`explore_embeddings.ipynb`](notebooks/explore_embeddings.ipynb) — embedding projections, per-class and per-tissue structure, nearest-neighbour retrieval with segmentation boundaries.
+- [`compare_encoders.ipynb`](notebooks/compare_encoders.ipynb) — UNI2-h vs DINOv3 backbones × linear / SVM / MLP heads, head to head.
+
+Held out (PanNuke fold2, ~9k nuclei): **UNI2-h + MLP — accuracy 0.78, macro-F1 0.77**
+(per-class F1 0.70–0.84).
+
+**Takeaway.** Stock open-vocabulary / VLM detectors don't densely localise nuclei
+zero-shot — the bottleneck is detection, not SAM2's masks. The working recipes are
+**LocateAnything → SAM2** on a GPU and **SAM3 + a pathology classifier**, each read
+against the oracle ceiling.
 
 ## Project layout
 
@@ -161,7 +201,7 @@ src/vlm_medseg/
   eval/        matching, PQ/SQ/DQ + mPQ, AJI/Dice, detection, classification, report
   viz/         class-coloured overlays + summary plots
   prompts.py · log.py · cli.py
-scripts/   run_method · curate_classifier_data · train_classifier · make_notebook · push_to_kaggle
+scripts/   run_method · curate_classifier_data · train_classifier
 notebooks/ · configs/ · tests/
 ```
 
