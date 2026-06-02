@@ -24,6 +24,31 @@ score hides which stage fails. `vlm-medseg` separates them and reads every metho
 against a **ground-truth oracle** that fixes SAM2's segmentation ceiling — so any
 shortfall is attributable to detection, segmentation, or classification.
 
+## Data — input and output
+
+The reference dataset is **[PanNuke](https://huggingface.co/datasets/RationAI/PanNuke)**
+(7,901 H&E patches across 3 folds, 5 nucleus classes over 19 tissue types). It loads
+straight from the Hugging Face Hub and caches locally — no manual download or
+preprocessing:
+
+```python
+from vlm_medseg.data import get_dataset
+ds = get_dataset("pannuke", fold="fold1")   # downloads + caches on first use
+sample = ds.decode(0)                        # -> Sample(image, inst_map, inst_classes, group)
+```
+
+- **Input** — one **256×256 RGB H&E patch**.
+- **Output** — one **instance mask per nucleus**, each carrying a predicted **class** (one of 5 PanNuke types) and a confidence; written to `results/<method>/` as `summary.json`, `predictions.jsonl`, and per-patch overlays.
+
+<p align="center"><img src="assets/data_example.png" width="620" alt="An H&E patch and its ground-truth nucleus instances coloured by class"></p>
+
+Run a method end to end — patches → masks + classes → metrics + overlays:
+
+```bash
+python scripts/run_method.py sam3_text --n 8 --classifier uni2h_mlp
+# -> results/sam3_text/{summary.json, predictions.jsonl, overlays/*.png}
+```
+
 ## Features
 
 - **Six conditions** behind one interface: `oracle_box`, `gdino_box`, `owlv2_box`, `qwen_box`, `la_box`, `sam3_text`.
@@ -99,8 +124,9 @@ or `before | after` with a classifier).
 
 ### Post-hoc nucleus classifier
 
-Segment class-agnostically, then classify each mask from its pixels with a frozen
-pathology encoder + a trained head:
+Grounding VLMs and SAM3 localise nuclei well but name them poorly (their class labels
+collapse toward one type). So we segment **class-agnostically**, then classify each mask
+from its pixels with a frozen pathology encoder + a small trained head:
 
 ```bash
 # 1) curate features (UNI2-h default; --encoder dinov3 also available)
@@ -109,6 +135,21 @@ python scripts/curate_classifier_data.py --fold fold2 --n 80 --max-per-class 600
 python scripts/train_classifier.py --features data/classifier/uni2h_fold2.npz
 # 3) use it: --classifier uni2h_mlp
 ```
+
+**Why crop with surrounding context.** A nucleus is only ~10–40 px, and at that scale
+subtype is genuinely ambiguous in isolation. We crop a **square window expanded by a
+`margin` (default 0.4) around the mask** rather than the tight bounding box, so the
+encoder sees the surrounding tissue — neighbouring cells, stroma, gland structure — that
+disambiguates the type. The mask boundary is *not* burned into the crop; the encoder reads
+raw RGB.
+
+<p align="center"><img src="assets/crop_context.png" width="600" alt="The same nucleus cropped tightly vs. with a context margin"></p>
+
+**Why UNI2-h.** [UNI2-h](https://huggingface.co/MahmoodLab/UNI2-h) is a ViT-H foundation
+model pre-trained on ~100M+ histopathology tiles, so its features already encode H&E
+morphology — it separates nucleus subtypes far better than a generic ImageNet/DINO
+backbone (see [`compare_encoders.ipynb`](notebooks/compare_encoders.ipynb)). The encoder
+is frozen; only the lightweight head is trained, which keeps it fast and data-efficient.
 
 Curation uses class-balanced `StratifiedKFold` splits; the held-out fold run
 through the pipeline is the honest test. The CLI (`vlm-medseg`) also exposes
@@ -127,6 +168,34 @@ The notebooks `pip install` the package from this public GitHub repo at runtime 
 on Kaggle, enable **GPU** and **Internet** (Settings → Accelerator: GPU,
 Internet: On). Gated models (**SAM3**, **UNI2-h**) need an `HF_TOKEN` Kaggle Secret;
 each notebook's bootstrap logs in with it.
+
+## Prompts
+
+What a method "looks for" is a prompt, and prompts are a first-class, **tunable** part of
+the pipeline — kept in one place ([`prompts.py`](src/vlm_medseg/prompts.py) for the
+per-model request template, the `DatasetSpec` for the vocabulary) so they're easy to audit
+and improve. The dataset supplies two vocabularies:
+
+- **Generic (class-agnostic):** `"cell nucleus"` — used when you only want masks and let the classifier name them.
+- **Class-aware (descriptive):** one phrase per PanNuke type —
+  `"neoplastic tumor cell nucleus"`, `"inflammatory immune cell nucleus"`,
+  `"connective or soft tissue cell nucleus"`, `"dead or necrotic cell nucleus"`,
+  `"epithelial cell nucleus"`.
+
+Each model wraps that vocabulary in its own request, e.g.:
+
+| model | request |
+|---|---|
+| LocateAnything-3B | `Locate all the instances that matches the following description: <phrases>` |
+| Qwen2.5-VL | `Detect every instance of the following… Output a JSON list of {"bbox_2d": …, "label": …}` |
+| Grounding-DINO | lowercase phrases joined by `" . "` |
+| SAM3 | one **short noun phrase** per forward pass (no template) |
+
+**There is large headroom here.** These phrases are deliberately simple. Richer
+morphological descriptions, per-tissue phrasing, few-shot exemplars, or threshold tuning
+are all easy to try (one edit in `prompts.py` / the `DatasetSpec`) and are a promising
+lever for the localization gaps the Results show — empirically, descriptive phrases help
+the grounding VLMs while *short* noun phrases work best for SAM3.
 
 ## Results
 
@@ -179,6 +248,8 @@ are fine.
 | oracle (ceiling) | 0.84 | 0.85 | 0.93 | 0.86 |
 | SAM3 (text concept) | 0.37 | 0.49 | 0.64 | 0.84 |
 | OWLv2 → SAM2 | 0.09 | 0.11 | 0.31 | 0.78 |
+
+More SAM3 qualitative results (per-patch before/after-classifier overlays): **[SAM3.md](SAM3.md)**.
 
 ### Nucleus classifier & encoder diagnostics (local)
 
