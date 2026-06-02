@@ -136,15 +136,23 @@ Two GPU notebooks benchmark the methods on a random sample of PanNuke fold1 patc
 boxes → SAM2) is the segmentation ceiling every method is read against — so a method's
 distance from it is a *detection* gap, not a *masking* one.
 
-### Grounding VLMs: what fine-tuning buys
+### Grounding fine-tuning vs. the stock foundation VLM
 
 `locate_anything_pannuke_kaggle` &nbsp;·&nbsp; [▶ run on Kaggle](https://www.kaggle.com/code/marjan1111/locateanything-vlm-sam2)
+
+[**LocateAnything-3B**](https://huggingface.co/nvidia/LocateAnything-3B) (NVIDIA,
+[project page](https://research.nvidia.com/labs/lpr/locate-anything/)) is a vision-language
+model specialised for *visual grounding*: given a text query it predicts where the named
+objects are. NVIDIA built it by fine-tuning the **Qwen2.5-VL-3B** foundation on large-scale
+localization data. We compare it head-to-head with that **same stock foundation**
+(Qwen2.5-VL-3B) — identical backbone, identical SAM2 masker, only the grounding fine-tuning
+differs — so the gap between the two isolates exactly what that training buys for finding nuclei.
 
 <p align="center"><img src="assets/locate_anything.png" width="760" alt="H&E, ground truth, oracle, Qwen and LocateAnything overlays across six patches"></p>
 <p align="center"><img src="assets/results_locate_anything.png" width="760" alt="PQ, AJI, Dice and matched-IoU for oracle, Qwen and LocateAnything"></p>
 
 Stock **Qwen2.5-VL** returns near whole-image boxes, so it barely segments anything.
-**LocateAnything-3B**'s grounding fine-tuning recovers real nuclei: its **matched-IoU
+After grounding fine-tuning, **LocateAnything-3B** recovers real nuclei: its **matched-IoU
 (0.81) approaches the oracle ceiling (0.86)** — the masks it produces are sound — while
 its lower PQ (0.30) is the *detection* gap, the nuclei it never proposes.
 
