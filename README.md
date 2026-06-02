@@ -116,16 +116,17 @@ through the pipeline is the honest test. The CLI (`vlm-medseg`) also exposes
 
 ### Notebooks ([`notebooks/`](notebooks/))
 
-| notebook | purpose |
-|---|---|
-| `locate_anything_pannuke_kaggle` | grounding-VLM comparison: oracle vs stock Qwen2.5-VL vs LocateAnything-3B (transformers 4.57) |
-| `method_comparison_kaggle` | side-by-side comparison of OWLv2 / SAM3 vs oracle on N random patches (transformers 5.x) |
-| `explore_embeddings` | classifier feature diagnostics (projection, per-tissue, retrieval) |
-| `compare_encoders` | encoder × head bench (UNI2-h vs DINOv3; linear/SVM/MLP) |
+| notebook | purpose | run |
+|---|---|---|
+| `locate_anything_pannuke_kaggle` | grounding-VLM comparison: oracle vs stock Qwen2.5-VL vs LocateAnything-3B (transformers 4.57) | [▶ Kaggle](https://www.kaggle.com/code/marjan1111/locateanything-vlm-sam2) |
+| `method_comparison_kaggle` | side-by-side comparison of OWLv2 / SAM3 vs oracle on N random patches (transformers 5.x) | — |
+| `explore_embeddings` | classifier feature diagnostics (projection, per-tissue, retrieval) | — |
+| `compare_encoders` | encoder × head bench (UNI2-h vs DINOv3; linear/SVM/MLP) | — |
 
 The notebooks `pip install` the package from this public GitHub repo at runtime —
 on Kaggle, enable **GPU** and **Internet** (Settings → Accelerator: GPU,
-Internet: On). No token or secret needed.
+Internet: On). Gated models (**SAM3**, **UNI2-h**) need an `HF_TOKEN` Kaggle Secret;
+each notebook's bootstrap logs in with it.
 
 ## Results
 
