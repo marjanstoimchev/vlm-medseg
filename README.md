@@ -118,8 +118,8 @@ through the pipeline is the honest test. The CLI (`vlm-medseg`) also exposes
 
 | notebook | purpose |
 |---|---|
-| `locate_anything_pannuke_kaggle` | run LocateAnything-3B → SAM2 on a Kaggle GPU |
-| `method_comparison_kaggle` | side-by-side comparison of LA / OWLv2 / SAM3 vs oracle on N random patches |
+| `locate_anything_pannuke_kaggle` | grounding-VLM comparison: oracle vs stock Qwen2.5-VL vs LocateAnything-3B (transformers 4.57) |
+| `method_comparison_kaggle` | side-by-side comparison of OWLv2 / SAM3 vs oracle on N random patches (transformers 5.x) |
 | `explore_embeddings` | classifier feature diagnostics (projection, per-tissue, retrieval) |
 | `compare_encoders` | encoder × head bench (UNI2-h vs DINOv3; linear/SVM/MLP) |
 
