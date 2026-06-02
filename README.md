@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/banner.png" width="100%" alt="vlm-medseg — can vision-language models segment cells? Find, segment, and name nuclei on H&E."></p>
+
 # vlm-medseg
 
 **Benchmarking vision-language and open-vocabulary models for nuclei instance segmentation on PanNuke.**
