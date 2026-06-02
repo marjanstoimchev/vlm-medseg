@@ -184,6 +184,11 @@ classifier relabels each mask from its pixels. Two local notebooks document it e
 Held out (PanNuke fold2, ~9k nuclei): **UNI2-h + MLP — accuracy 0.78, macro-F1 0.77**
 (per-class F1 0.70–0.84).
 
+A sample of per-patch overlays — **H&E · ground truth · before (prompt labels) · after
+(classifier)** — is committed under [`results/sam3_text/overlays/`](results/sam3_text/overlays/)
+so the post-hoc relabelling can be inspected directly. Every `run_method.py` run writes the
+same artifacts to `results/<method>/`.
+
 **Takeaway.** Stock open-vocabulary / VLM detectors don't densely localise nuclei
 zero-shot — the bottleneck is detection, not SAM2's masks. The working recipes are
 **LocateAnything → SAM2** on a GPU and **SAM3 + a pathology classifier**, each read
