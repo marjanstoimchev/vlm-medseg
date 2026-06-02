@@ -4,6 +4,7 @@
 
 **Benchmarking vision-language and open-vocabulary models for nuclei instance segmentation on PanNuke.**
 
+[![CI](https://github.com/marjanstoimchev/vlm-medseg/actions/workflows/ci.yml/badge.svg)](https://github.com/marjanstoimchev/vlm-medseg/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Lint](https://img.shields.io/badge/lint-ruff-261230)
