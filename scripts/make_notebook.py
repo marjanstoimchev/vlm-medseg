@@ -32,32 +32,21 @@ Exploratory driver. All logic lives in the [`vlm-medseg`](https://github.com/mar
 > Models load **sequentially** and free their memory, so this fits a 16 GB GPU. NVIDIA's LocateAnything license is academic / non-profit research only.
 """)
 
-md("## 1 — Bootstrap (private repo)\nKaggle ships CUDA torch; we add the model stacks (`transformers==4.57.1` serves LocateAnything, Qwen2.5-VL, SAM2 and SAM3) and the package. For the **private** repo add a Kaggle Secret `GITHUB_TOKEN` (Add-ons → Secrets), or attach the repo as a dataset for the offline fallback.")
-co("""import os, sys, subprocess
+md("## 1 — Bootstrap\nKaggle ships a CUDA build of torch; we add only the model stacks (`transformers==4.57.1` serves LocateAnything, Qwen2.5-VL, SAM2 and SAM3) and the package from GitHub. **Enable GPU + Internet** in the notebook settings (Settings → Accelerator: GPU, Internet: On).")
+co('''import os, sys, subprocess
 IN_KAGGLE = os.path.exists("/kaggle")
-REPO_HOST = "github.com/marjanstoimchev/vlm-medseg.git"
+REPO = "git+https://github.com/marjanstoimchev/vlm-medseg.git@main"
 
 def pip(*pkgs):
     subprocess.run([sys.executable, "-m", "pip", "install", "-q", *pkgs], check=True)
 
 if IN_KAGGLE:
-    pip("transformers==4.57.1", "decord==0.6.0", "lmdb==1.7.5",
-        "peft", "accelerate", "einops", "timm")
-    token = None
-    try:
-        from kaggle_secrets import UserSecretsClient
-        token = UserSecretsClient().get_secret("GITHUB_TOKEN")
-    except Exception as e:
-        print("no GITHUB_TOKEN secret:", e)
-    if token:
-        pip(f"git+https://{token}@{REPO_HOST}@main")
-    elif os.path.isdir("/kaggle/input/vlm-medseg-src"):
-        pip("/kaggle/input/vlm-medseg-src")
-    else:
-        raise RuntimeError("Add a GITHUB_TOKEN secret or attach the vlm-medseg-src dataset.")
+    # Kaggle ships a CUDA build of torch -- add only the model stacks on top.
+    pip("transformers==4.57.1", "decord==0.6.0", "lmdb==1.7.5", "peft", "accelerate", "einops", "timm")
+    pip(REPO)               # public repo: no token needed
 else:
     pip("-e", "..")
-print("bootstrap done")""")
+print("bootstrap done")''')
 
 md("## 2 — Configuration")
 co("""import gc, json, time, numpy as np, torch

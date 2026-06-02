@@ -123,8 +123,9 @@ through the pipeline is the honest test. The CLI (`vlm-medseg`) also exposes
 | `explore_embeddings` | classifier feature diagnostics (projection, per-tissue, retrieval) |
 | `compare_encoders` | encoder × head bench (UNI2-h vs DINOv3; linear/SVM/MLP) |
 
-Private-repo notebooks `pip install` the package from GitHub; on Kaggle add a
-`GITHUB_TOKEN` secret (or attach the repo as a dataset).
+The notebooks `pip install` the package from this public GitHub repo at runtime —
+on Kaggle, enable **GPU** and **Internet** (Settings → Accelerator: GPU,
+Internet: On). No token or secret needed.
 
 ## Results
 
