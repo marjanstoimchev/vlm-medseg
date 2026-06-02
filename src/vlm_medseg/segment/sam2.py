@@ -62,7 +62,7 @@ class Sam2Masker:
         input_boxes = [[list(map(float, b)) for b in boxes]]
         inputs = self.processor(
             images=self._to_pil(image), input_boxes=input_boxes, return_tensors="pt"
-        ).to(self.device)
+        ).to(self.device, self.dtype)
         with torch.inference_mode():
             outputs = self.model(**inputs, multimask_output=False)
         return [m[0].numpy().astype(bool) for m in self._post(outputs, inputs)[0]]
@@ -93,7 +93,7 @@ class Sam2Masker:
             input_points=input_points,
             input_labels=input_labels,
             return_tensors="pt",
-        ).to(self.device)
+        ).to(self.device, self.dtype)
         with torch.inference_mode():
             outputs = self.model(**inputs, multimask_output=multimask_output)
         post = self._post(outputs, inputs)[0]          # (N, num_masks, H, W)

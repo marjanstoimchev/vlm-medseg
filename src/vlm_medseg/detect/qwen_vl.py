@@ -147,7 +147,7 @@ class QwenVLDetector:
         prompt = self.processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
-        inputs = self.processor(text=[prompt], images=[image], return_tensors="pt").to(self.device)
+        inputs = self.processor(text=[prompt], images=[image], return_tensors="pt").to(self.device, self.dtype)
         with torch.no_grad():
             gen = self.model.generate(
                 **inputs, max_new_tokens=self.max_new_tokens,

@@ -62,7 +62,7 @@ class Sam3TextSegmenter:
         pil = Image.fromarray(sample.image)
         instances: list[InstancePrediction] = []
         for phrase, class_id in self.prompts:
-            inputs = self.processor(images=pil, text=phrase, return_tensors="pt").to(self.device)
+            inputs = self.processor(images=pil, text=phrase, return_tensors="pt").to(self.device, self.dtype)
             with torch.inference_mode():
                 outputs = self.model(**inputs)
             res = self.processor.post_process_instance_segmentation(
