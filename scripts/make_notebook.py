@@ -78,12 +78,14 @@ md("""## 2 — Configuration
 Everything per-method lives here:
 - **`N_IMAGES` / `SEED`** — how many random patches and which draw.
 - **`INPUT_SHORT`** — short side the patch is upscaled to before each VLM (the same for both, for a fair comparison).
-- **`SAHI_METHODS`** — which VLM detectors to tile (e.g. `{"qwen", "la"}`, or `set()` for none); tiling helps a grounding VLM that emits a few coarse boxes on a dense field.
-- **Classifier** — `USE_CLASSIFIER` + `CLASSIFIER_DIR` (the attached UNI2-h Model). When on, it overrides each predicted nucleus class from its pixels for both VLMs **except the oracle**.""")
+- **Classifier** — `USE_CLASSIFIER` + `CLASSIFIER_DIR` (the attached UNI2-h Model). When on, it overrides each predicted nucleus class from its pixels for both VLMs **except the oracle**.
+
+To fit a 16 GB GPU the run is **phased** — VLM detection, then SAM2 masking, then classification — so only one heavy model is resident at a time.""")
 co("""import gc, os, glob, numpy as np, torch
 import matplotlib.pyplot as plt
 from vlm_medseg.viz import set_paper_style
 set_paper_style()                      # clean, consistent figure styling for every plot below
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")  # reduce fragmentation
 
 # -- dataset / sampling --
 DATASET     = "pannuke"
@@ -99,10 +101,6 @@ INPUT_SHORT = 1024         # upscale short side so both VLMs can see tiny nuclei
 # -- which methods to run --
 RUN_QWEN, RUN_LA = True, True
 
-# -- SAHI tiling for the VLM detectors (recovers dense, tiny nuclei) --
-SAHI_METHODS = set()       # e.g. {"qwen", "la"} to tile, or set() for raw VLM boxes
-SAHI_TILE, SAHI_OVERLAP = 128, 0.25
-
 # -- post-hoc nucleus classifier: overrides predicted class from pixels (UNI2-h + MLP) --
 # Attach the Kaggle Model and point CLASSIFIER_DIR at it; the .joblib is auto-found.
 USE_CLASSIFIER = True
@@ -113,7 +111,7 @@ def free():
     if torch.cuda.is_available(): torch.cuda.empty_cache()
 DEVICE = "cuda" if IN_KAGGLE else "auto"
 print("comparing", N_IMAGES, "patches from", f"{DATASET}/{FOLD}", "· seed", SEED,
-      "· SAHI:", SAHI_METHODS or "off", "· classifier:", USE_CLASSIFIER)""")
+      "· classifier:", USE_CLASSIFIER)""")
 
 md("## 3 — Sample patches\nA uniform-random draw (not stratified), so the panel reflects a typical field of view rather than a curated one — change `SEED` to resample. Each patch shows its ground-truth nuclei: the **fill** encodes class and the **yellow outline** marks each boundary; the title gives tissue type and nucleus count.")
 co("""import random
@@ -139,60 +137,71 @@ fig.legend(handles=class_legend_handles(spec), loc="lower center", ncol=spec.num
 fig.suptitle("Ground-truth nuclei — the targets", y=1.0)
 fig.tight_layout(rect=(0, 0.05, 1, 1)); plt.show()""")
 
-md("""## 4 — Run each method
-SAM2 is loaded once and shared; each VLM is loaded, run over the patches, then freed (so it fits a 16 GB GPU). The oracle uses ground-truth boxes. Detectors in **`SAHI_METHODS`** are tiled first, and if the **classifier** loaded it relabels both VLMs' nuclei **except the oracle**.
+md("""## 4 — Run each method (memory-aware, phased)
+A 16 GB GPU cannot hold a VLM, SAM2 and the classifier's encoder at once, so the work is split into phases that each free their model before the next:
 
-> LocateAnything generates boxes autoregressively, so its pass is the slow one — expect it to take noticeably longer per patch than Qwen.""")
+1. **Detect** — load each VLM, emit boxes for every patch, free it.
+2. **Segment** — load SAM2 once, turn every box set (and the ground-truth oracle) into masks, free it.
+3. **Classify** — load the UNI2-h classifier, relabel both VLMs' nuclei from their pixels (the oracle keeps its ground-truth classes), free it.
+
+> LocateAnything generates boxes autoregressively, so the detect phase is the slow one — expect it to take noticeably longer per patch than Qwen.""")
 co("""from vlm_medseg.segment.sam2 import Sam2Masker
 from vlm_medseg.detect.oracle import OracleBoxDetector
-from vlm_medseg.detect.sahi import SahiDetector
 from vlm_medseg.pipeline.run import run_condition
+from vlm_medseg.eval.report import evaluate_patch, summarize
+from tqdm.auto import tqdm
 
-# Optional post-hoc classifier: relabels each predicted nucleus from its pixels.
-classifier = None
-if USE_CLASSIFIER:
-    from vlm_medseg.classify.linear_probe import NucleusClassifier
-    hits = sorted(glob.glob(os.path.join(CLASSIFIER_DIR, "*.joblib")))
-    if hits:
-        classifier = NucleusClassifier.load(hits[0], device=DEVICE)
-        print("classifier:", os.path.basename(hits[0]), "->", classifier.class_names)
-    else:
-        print("USE_CLASSIFIER set but no .joblib under", CLASSIFIER_DIR, "-- continuing without it")
-
-def sahi(det, key):   # tile a VLM detector only if it is listed in SAHI_METHODS
-    return SahiDetector(det, tile=SAHI_TILE, overlap=SAHI_OVERLAP) if key in SAHI_METHODS else det
-
-masker = Sam2Masker(device=DEVICE)
-runs = {}
-
-# Oracle is the segmentation ceiling: ground-truth boxes AND classes -> never classified.
-runs["oracle"] = run_condition(OracleBoxDetector(class_aware=CLASS_AWARE, spec=spec),
-                               masker, samples, spec=spec, iou_thresh=IOU_THRESH)
-
-# Each VLM is isolated: a failure skips just that method (with a note), so the rest still
-# renders. Detectors in SAHI_METHODS are tiled; the classifier (if loaded) overrides classes.
+# -- phase 1: detection (one VLM resident at a time; SAM2 not loaded yet) --
+boxes = {}   # method -> {sample_id: [Detection]}
 if RUN_QWEN:
     try:
         from vlm_medseg.detect.qwen_vl import QwenVLDetector
-        qwen = sahi(QwenVLDetector(device=DEVICE, class_aware=CLASS_AWARE, spec=spec, input_short_size=INPUT_SHORT), "qwen")
-        runs["qwen"] = run_condition(qwen, masker, samples, spec=spec, iou_thresh=IOU_THRESH, classifier=classifier)
+        qwen = QwenVLDetector(device=DEVICE, class_aware=CLASS_AWARE, spec=spec, input_short_size=INPUT_SHORT)
+        boxes["qwen"] = {s.sample_id: qwen.detect(s) for s in tqdm(samples, desc="qwen detect")}
         del qwen; free()
     except Exception as e:
         print("qwen skipped:", type(e).__name__, e)
-
 if RUN_LA:
     try:
         from vlm_medseg.detect.locate_anything import LocateAnythingDetector
-        la = sahi(LocateAnythingDetector(device="cuda", class_aware=CLASS_AWARE, spec=spec, input_short_size=INPUT_SHORT), "la")
-        runs["la"] = run_condition(la, masker, samples, spec=spec, iou_thresh=IOU_THRESH, classifier=classifier)
+        la = LocateAnythingDetector(device="cuda", class_aware=CLASS_AWARE, spec=spec, input_short_size=INPUT_SHORT)
+        boxes["la"] = {s.sample_id: la.detect(s) for s in tqdm(samples, desc="la detect")}
         del la; free()
     except Exception as e:
         print("locate-anything skipped:", type(e).__name__, e)
         print("  LocateAnything needs a CUDA GPU and transformers==4.57.1 (the bootstrap pins it).")
 
-del masker
-if classifier is not None: del classifier
-free()
+# -- phase 2: segmentation with one shared SAM2 (no VLM resident) --
+masker = Sam2Masker(device=DEVICE)
+runs = {}
+runs["oracle"] = run_condition(OracleBoxDetector(class_aware=CLASS_AWARE, spec=spec),
+                               masker, samples, spec=spec, iou_thresh=IOU_THRESH)
+for name, pre in boxes.items():
+    runs[name] = run_condition(None, masker, samples, spec=spec, precomputed=pre, iou_thresh=IOU_THRESH)
+del masker; free()
+
+# -- phase 3: post-hoc classification (UNI2-h resident; nothing else heavy) --
+# Relabel each non-oracle method from pixels, then recompute its class-aware metrics.
+if USE_CLASSIFIER:
+    from vlm_medseg.classify.linear_probe import NucleusClassifier
+    hits = sorted(glob.glob(os.path.join(CLASSIFIER_DIR, "*.joblib")))
+    if hits:
+        clf = NucleusClassifier.load(hits[0], device=DEVICE)
+        print("classifier:", os.path.basename(hits[0]), "->", clf.class_names)
+        for name, out in runs.items():
+            if name == "oracle":          # the oracle keeps its ground-truth classes
+                continue
+            pm = []
+            for s, res in zip(samples, out["results"]):
+                clf.classify_instances(s.image, res.instances)
+                pm.append(evaluate_patch(s, res.instances, num_classes=spec.num_classes, iou_thresh=IOU_THRESH))
+            out["patch_metrics"] = pm
+            out["summary"] = summarize(pm, num_classes=spec.num_classes,
+                                       class_names=spec.class_names, group_names=spec.group_names)
+        del clf; free()
+    else:
+        print("USE_CLASSIFIER set but no .joblib under", CLASSIFIER_DIR, "-- continuing without it")
+
 print("ran:", list(runs))""")
 
 md("## 5 — Qualitative comparison\nOne row per patch: **H&E · ground truth · each method**. The fill encodes the predicted class and the **yellow outline** marks each boundary, so the figure reads like a contact sheet — missed nuclei, whole-image or coarse boxes, merged neighbours, and class confusion are all apparent against the ground-truth column.")
@@ -228,7 +237,7 @@ md("""## 8 — Reading the comparison
 
 - **The oracle is the segmentation ceiling.** Given perfect boxes, SAM2 delineates nuclei well, so both VLMs are best read as a *fraction* of the oracle; the distance to it is the detection gap each VLM leaves on the table.
 - **Stock versus grounding-tuned.** The gap between Qwen and LocateAnything is the value of grounding fine-tuning: if LocateAnything localises more nuclei — higher recall, count ratio nearer one — while matched IoU is comparable, the training is buying *detection*, not segmentation.
-- **Coarse boxes under-count.** Grounding VLMs tend to emit a handful of large boxes on a dense field; matched IoU can look healthy while recall and the count ratio reveal how many nuclei were never proposed. Tiling (`SAHI_METHODS`) is the lever that turns one coarse box into many local ones.
+- **Coarse boxes under-count.** Grounding VLMs tend to emit a handful of large boxes on a dense field; matched IoU can look healthy while recall and the count ratio reveal how many nuclei were never proposed — the gap a denser proposal strategy would have to close.
 - **Naming as a separate axis.** With the classifier enabled, the fill colours reflect a pixel-level subtype prediction rather than the prompt label; toggling it isolates how much of the class confusion is a *naming* problem solvable after segmentation versus a *segmentation* one.
 - **Stability of the reading.** Raising **`N_IMAGES`** widens the sample and changing **`SEED`** resamples it; the qualitative ordering of the two VLMs should persist across draws.
 """)
