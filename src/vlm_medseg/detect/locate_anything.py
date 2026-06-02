@@ -188,6 +188,7 @@ class LocateAnythingDetector:
                 temperature=self.temperature,
                 top_p=self.top_p,
                 repetition_penalty=1.05,
+                use_cache=True,  # required by LocateAnything's custom generate()
             )
         return response[0] if isinstance(response, (tuple, list)) else response
 
